@@ -8,10 +8,10 @@
       "currency": "KRW"
     },
     {
-      "code": "OUT-MATEAPP",
-      "name": "주문접수(메이트오더) 앱",
-      "description": "QR오더 주문 수신 및 처리용 앱\n매장 등록 제반사항 업무 지원\n(대금결제 · 한 매장 기준)",
-      "unit_price": 10000,
+      "code": "OUT-POSAPP",
+      "name": "주문접수 프로그램",
+      "description": "QR오더 주문 수신 및 처리용 앱\n매장 등록 제반사항 업무 지원(한 매장 기준)",
+      "unit_price": 50000,
       "currency": "KRW"
     },
     {
@@ -23,8 +23,8 @@
     },
     {
       "code": "OUT-KIOSK",
-      "name": "통합 키오스크 패키지 (3일 이상)",
-      "description": "실물 카드 결제용 태블릿(미니키오스크)\n- 삼성 태블릿(SM-X110) + 거치대\n- 보조배터리 20,000mAh\n- 인터넷 라우터(전원연결형)\n- 통합 솔루션\n(대금결제 · 1일 기준)",
+      "name": "미니 키오스크(휴대용)",
+      "description": "실물 카드 결제용 \n- 고객 주문 알림 기능 포함",
       "unit_price": 100000,
       "currency": "KRW"
     },
@@ -37,8 +37,8 @@
     },
     {
       "code": "OUT-ADBANNER",
-      "name": "광고 배너 Web 연결",
-      "description": "광고 배너 Web 연결\n(대금결제 · 1일 기준)",
+      "name": "QR메뉴판 광고채널",
+      "description": "배너영역 Web 연결 기능\n(대금결제 · 1일 기준)",
       "unit_price": 50000,
       "currency": "KRW"
     },
@@ -56,6 +56,27 @@
       "unit_price": 5,
       "currency": "KRW",
       "billing_type": "deferred_percent"
+    },
+    {
+      "code": "OUT-HARDWARE",
+      "name": "푸드코트형 패키지",
+      "description": "- POS + 금전함+단말기 + 서명패드\n- 영수증 프린터 및 용지\n-  KDS(주문메뉴 확인용)_태블릿포함 5대\n- 동그리 5개\n- 키오스크 2대\n- 스탠딩 모니터(DID)_주문현황 알림판",
+      "unit_price": 5000000,
+      "currency": "KRW"
+    },
+    {
+      "code": "OUT-OPS",
+      "name": "설치비 (수도권 외)",
+      "description": "- 수도권 외 지역 설치 시 적용 (1회성)",
+      "unit_price": 150000,
+      "currency": "KRW"
+    },
+    {
+      "code": "OUT-Language",
+      "name": "다국어 메뉴정보 번역",
+      "description": "- 메뉴명에 대한 다국어 번역 서비스(영어,일본어,중국어 간체/번체) (대금결제 · 한 매장 기준)",
+      "unit_price": 100000,
+      "currency": "KRW"
     }
   ]
 }

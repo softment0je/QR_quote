@@ -50,10 +50,10 @@
       "currency": "KRW"
     },
     {
-      "code": "a",
-      "name": "a",
-      "description": "a",
-      "unit_price": 1000,
+      "code": "야외행사 솔루션",
+      "name": "푸드코트형 솔루션",
+      "description": "- POS + 금전함 + 단말기 + 서명패드 (1세트)\n- 영수증 프린터 및 용지 (1세트)\n- KDS 5대\n- 동그리 5개\n- 키오스크 2대\n- 스탠딩 모니터",
+      "unit_price": 5000000,
       "currency": "KRW"
     }
   ]

@@ -844,10 +844,25 @@ DISPLAY_COLUMNS = ["분류", "항목", "설명", "단가", "기간(횟수)", "�
                    "할인율(%)", "할인금액", "공급가", "비고"]
 
 # 분류 선택지
-ITEM_KIND_NORMAL = "📋 품목"
-ITEM_KIND_DISCOUNT = "💰 할인행"
-ITEM_KIND_DEFERRED = "💸 정률(결제액 %)"
+# 금액을 어떻게 산정하는 행인지 — 세 값이 같은 층위가 되도록 정액/정률/할인으로 구성
+ITEM_KIND_NORMAL = "📋 정액(원)"
+ITEM_KIND_DISCOUNT = "💰 할인(차감)"
+ITEM_KIND_DEFERRED = "💸 정률(%)"
 ITEM_KINDS = [ITEM_KIND_NORMAL, ITEM_KIND_DISCOUNT, ITEM_KIND_DEFERRED]
+# 구버전 라벨 → 현재 라벨 (기존 세션·저장본 호환)
+ITEM_KIND_ALIASES = {
+    "📋 품목": ITEM_KIND_NORMAL,
+    "💰 할인행": ITEM_KIND_DISCOUNT,
+    "💸 후불(QR결제%)": ITEM_KIND_DEFERRED,
+    "💸 정률(결제액 %)": ITEM_KIND_DEFERRED,
+}
+
+
+def _normalize_kind_column(series):
+    """'분류' 컬럼의 구버전 라벨을 현재 라벨로 맞춘다."""
+    return (series.fillna(ITEM_KIND_NORMAL)
+                  .replace("", ITEM_KIND_NORMAL)
+                  .replace(ITEM_KIND_ALIASES))
 # 품목 관리 — 청구 방식 라벨 (구버전 '후불(QR결제%)' 도 계속 인식)
 BILLING_LABEL_FIXED = "일시납"
 BILLING_LABEL_RATE = "정률(결제액 %)"
@@ -1272,7 +1287,7 @@ def render_quote_page(catalog_kind: str = "qr"):
         # 공급가 컬럼을 계산해서 디스플레이용 DataFrame 생성
         display_df = st.session_state.items_df.copy()
         # 분류 값이 비었으면 기본 '품목'으로 채움
-        display_df["분류"] = display_df["분류"].fillna(ITEM_KIND_NORMAL).replace("", ITEM_KIND_NORMAL)
+        display_df["분류"] = _normalize_kind_column(display_df["분류"])
         display_df["공급가"] = display_df.apply(
             lambda r: _row_amount(r, df=display_df), axis=1
         ).astype("Int64")
@@ -1293,11 +1308,13 @@ def render_quote_page(catalog_kind: str = "qr"):
                     help="삭제할 행을 체크 후 우측 상단 '🗑 선택 삭제' 클릭",
                 ),
                 "분류": st.column_config.SelectboxColumn(
-                    "분류", options=ITEM_KINDS, required=True, width="small",
-                    help=("'💰 할인행': 단가를 입력하면 자동 차감 처리. "
-                          "'💸 정률(결제액 %)': 결제액의 N% 로 받는 항목. "
-                          "합계에서 제외되고 견적서에는 단가·공급가가 '-' 로 "
-                          "표시됩니다 (선불·후불 정산 모두 사용)."),
+                    "금액 방식", options=ITEM_KINDS, required=True,
+                    width="small",
+                    help=("이 행의 금액을 어떻게 정할지 고릅니다. "
+                          "'📋 정액(원)': 단가 × 수량 × 기간. "
+                          "'💸 정률(%)': 결제액의 N% — 합계에서 빠지고 "
+                          "견적서에는 단가·공급가가 '-' 로 표시됩니다. "
+                          "'💰 할인(차감)': 입력한 만큼 합계에서 차감."),
                 ),
                 "항목": st.column_config.TextColumn("항목", required=True, width="medium"),
                 "설명": st.column_config.TextColumn("설명", width="large"),
@@ -3308,7 +3325,7 @@ def render_membership_quote_page():
                     st.rerun()
 
         display_df = st.session_state.mc_items_df.copy()
-        display_df["분류"] = display_df["분류"].fillna(ITEM_KIND_NORMAL).replace("", ITEM_KIND_NORMAL)
+        display_df["분류"] = _normalize_kind_column(display_df["분류"])
         display_df["공급가"] = display_df.apply(
             lambda r: _mc_row_amount(r, df=display_df), axis=1
         ).astype("Int64")
@@ -3318,7 +3335,8 @@ def render_membership_quote_page():
             display_df,
             column_config={
                 "분류": st.column_config.SelectboxColumn(
-                    "분류", options=ITEM_KINDS, required=True, width="small",
+                    "금액 방식", options=ITEM_KINDS, required=True,
+                    width="small",
                 ),
                 "구분": st.column_config.SelectboxColumn(
                     "구분", options=[""] + _MC_DEFAULT_SECTIONS + ["기타"],

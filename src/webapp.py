@@ -846,8 +846,17 @@ DISPLAY_COLUMNS = ["분류", "항목", "설명", "단가", "기간(횟수)", "�
 # 분류 선택지
 ITEM_KIND_NORMAL = "📋 품목"
 ITEM_KIND_DISCOUNT = "💰 할인행"
-ITEM_KIND_DEFERRED = "💸 후불(QR결제%)"
+ITEM_KIND_DEFERRED = "💸 정률(결제액 %)"
 ITEM_KINDS = [ITEM_KIND_NORMAL, ITEM_KIND_DISCOUNT, ITEM_KIND_DEFERRED]
+# 품목 관리 — 청구 방식 라벨 (구버전 '후불(QR결제%)' 도 계속 인식)
+BILLING_LABEL_FIXED = "일시납"
+BILLING_LABEL_RATE = "정률(결제액 %)"
+BILLING_LABEL_RATE_LEGACY = "후불(QR결제%)"
+
+
+def _is_rate_billing(label: str) -> bool:
+    """'정률(결제액 %)' 또는 구버전 '후불(QR결제%)' 라벨이면 True."""
+    return str(label).strip() in (BILLING_LABEL_RATE, BILLING_LABEL_RATE_LEGACY)
 
 
 def _empty_items_df() -> pd.DataFrame:
@@ -870,13 +879,13 @@ def _ensure_items_state():
 
 
 def _add_catalog_row(product: dict):
-    # billing_type 메타로 분류 자동 셋팅 (deferred_percent → 후불)
+    # billing_type 메타로 분류 자동 셋팅 (deferred_percent → 정률)
     btype = (product.get("billing_type") or "").lower()
     if btype == "deferred_percent":
         kind = ITEM_KIND_DEFERRED
         period_v = None
         qty_v = None
-        notes_v = "QR결제액 기준 후청구"
+        notes_v = ""
     else:
         kind = ITEM_KIND_NORMAL
         period_v = 1
@@ -984,11 +993,11 @@ def _row_amount(row, df=None):
 
     - 분류='📋 품목': (수량×기간×단가) − 항목별 할인
     - 분류='💰 할인행': 다른 품목 합 또는 고정 금액 차감
-    - 분류='💸 후불(QR결제%)': 합계에서 제외 — 별도 후청구 안내로 표시
+    - 분류='💸 정률(결제액 %)': 합계에서 제외 — 별도 정률 항목 안내로 표시
     """
     kind = row.get("분류")
     if kind == ITEM_KIND_DEFERRED:
-        return None    # 후불 행은 즉시 합계에서 제외
+        return None    # 정률 행은 즉시 합계에서 제외
     if kind != ITEM_KIND_DISCOUNT:
         return _row_amount_normal(row)
 
@@ -1286,15 +1295,16 @@ def render_quote_page(catalog_kind: str = "qr"):
                 "분류": st.column_config.SelectboxColumn(
                     "분류", options=ITEM_KINDS, required=True, width="small",
                     help=("'💰 할인행': 단가를 입력하면 자동 차감 처리. "
-                          "'💸 후불(QR결제%)': 단가 칸에 % 값 입력 → 합계 미포함, "
-                          "행사 후 'QR결제액 × N%' 후청구 안내로 표시 (야외형 견적기)."),
+                          "'💸 정률(결제액 %)': 결제액의 N% 로 받는 항목. "
+                          "합계에서 제외되고 견적서에는 단가·공급가가 '-' 로 "
+                          "표시됩니다 (선불·후불 정산 모두 사용)."),
                 ),
                 "항목": st.column_config.TextColumn("항목", required=True, width="medium"),
                 "설명": st.column_config.TextColumn("설명", width="large"),
                 "단가": st.column_config.NumberColumn(
                     "단가", step=1000, format="₩%,d", width="small",
                     help=("일반 품목: 단가(원). '💰 할인행': 자동 차감. "
-                          "'💸 후불(QR결제%)': 단가 칸 값이 % 로 해석됩니다 "
+                          "'💸 정률(결제액 %)': 단가 칸 값이 % 로 해석됩니다 "
                           "(예: 5 → QR결제액의 5%). 2.5% 처럼 소수 요율은 "
                           "단가를 비우고 설명 칸에 'QR오더 결제액의 2.5%' 로 "
                           "적으면 견적서에 그대로 출력됩니다."),
@@ -1385,7 +1395,7 @@ def render_quote_page(catalog_kind: str = "qr"):
                             if pd.notna(rate) and rate else None)
                 desc = (r.get("설명") or "").strip()
                 if rate_txt:
-                    body = (f"QR오더 결제액의 <strong>{rate_txt}</strong>"
+                    body = (f"결제액의 <strong>{rate_txt}</strong>"
                             + (f" — {desc}" if desc else ""))
                 else:
                     # 단가 칸을 비우고 설명에 요율 문구를 쓴 경우
@@ -1396,7 +1406,7 @@ def render_quote_page(catalog_kind: str = "qr"):
 <div style="background:#FFF7E6; border-left:4px solid #D97706;
             border-radius:6px; padding:10px 14px; margin:8px 0 4px;">
   <div style="color:#92400E; font-weight:700; font-size:0.95rem;">
-    💸 후청구 안내 · {len(deferred_rows)}건 (위 합계와 별도로 행사 종료 후 정산)
+    💸 정률 항목 · {len(deferred_rows)}건 (위 합계와 별도로 결제액 기준 정산)
   </div>
   <ul style="margin:6px 0 0 18px; padding:0; color:#7C2D12; font-size:0.88rem;">
     {''.join(lines)}
@@ -1920,12 +1930,12 @@ def _render_qr_catalog_editor(catalog_kind: str = "qr"):
                 df[col] = default
         # 내부 enum 값을 사람이 보기 좋은 라벨로
         df["billing_type"] = df["billing_type"].apply(
-            lambda v: "후불(QR결제%)" if str(v).lower() == "deferred_percent"
-            else "일시납"
+            lambda v: BILLING_LABEL_RATE if str(v).lower() == "deferred_percent"
+            else BILLING_LABEL_FIXED
         )
-        # 후불 항목 단가가 0/빈 값이면 화면에서 빈 칸 (₩0 표기 방지)
+        # 정률 항목 단가가 0/빈 값이면 화면에서 빈 칸 (₩0 표기 방지)
         if "unit_price" in df.columns:
-            deferred = df["billing_type"] == "후불(QR결제%)"
+            deferred = df["billing_type"].apply(_is_rate_billing)
             if deferred.any():
                 zero_or_na = df["unit_price"].fillna(0) == 0
                 df.loc[deferred & zero_or_na, "unit_price"] = pd.NA
@@ -2037,7 +2047,7 @@ def _render_qr_catalog_editor(catalog_kind: str = "qr"):
             "unit_price": st.column_config.NumberColumn(
                 "단가", min_value=0, step=1000, format="%,d",
                 width="small",
-                help=("일시납은 원 단위 / 후불(QR결제%) 은 % 값 (예: 5 → 5%) 입력."),
+                help=("일시납은 원 단위 / 정률(결제액 %) 은 % 값 (예: 5 → 5%) 입력."),
             ),
             "currency": st.column_config.SelectboxColumn(
                 "통화", options=["KRW", "USD", "EUR", "JPY"],
@@ -2045,11 +2055,12 @@ def _render_qr_catalog_editor(catalog_kind: str = "qr"):
                 help="견적서 PDF 에서 단가 옆에 자동으로 붙는 통화 기호 (₩ / $ / € / ¥).",
             ),
             "billing_type": st.column_config.SelectboxColumn(
-                "청구 방식", options=["일시납", "후불(QR결제%)"],
+                "청구 방식",
+                options=[BILLING_LABEL_FIXED, BILLING_LABEL_RATE],
                 width="small",
                 help=("'일시납' 은 일반 단가. "
-                      "'후불(QR결제%)' 은 견적서에서 자동으로 '💸 후불' 분류로 추가되고, "
-                      "단가는 % 로 해석되어 합계와 별도로 후청구 안내에 표시."),
+                      "'정률(결제액 %)' 은 견적서에서 자동으로 '💸 정률' 분류로 추가되고, "
+                      "단가는 % 로 해석되어 합계와 별도로 안내 영역에 표시."),
             ),
         },
         num_rows="dynamic",
@@ -2081,7 +2092,7 @@ def _render_qr_catalog_editor(catalog_kind: str = "qr"):
                                else 0),
                 "currency": _safe_str(row.get("currency")).strip() or "KRW",
             }
-            if btype_label == "후불(QR결제%)":
+            if _is_rate_billing(btype_label):
                 item["billing_type"] = "deferred_percent"
             new_products.append(item)
         with st.spinner("💾 저장 중..."):
@@ -2110,7 +2121,7 @@ def _render_qr_catalog_editor(catalog_kind: str = "qr"):
                            else 0),
             "currency": _safe_str(r.get("currency")).strip() or "KRW",
             "billing_type": ("deferred_percent"
-                             if _safe_str(r.get("billing_type")).strip() == "후불(QR결제%)"
+                             if _is_rate_billing(_safe_str(r.get("billing_type")))
                              else "fixed"),
         }
         for _, r in edited.iterrows()

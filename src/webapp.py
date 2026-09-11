@@ -1562,7 +1562,8 @@ def _build_quote_artifacts(*, brand_id, issued_date, valid_until,
             ))
         else:
             # 일반 품목 행
-            unit_price = float(unit_price_raw or 0)
+            unit_price = (float(unit_price_raw)
+                          if pd.notna(unit_price_raw) and unit_price_raw else 0.0)
             items.append(LineItem(
                 name=name,
                 description=desc_val if isinstance(desc_val, str) and desc_val else None,

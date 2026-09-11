@@ -1295,7 +1295,9 @@ def render_quote_page(catalog_kind: str = "qr"):
                     "단가", step=1000, format="₩%,d", width="small",
                     help=("일반 품목: 단가(원). '💰 할인행': 자동 차감. "
                           "'💸 후불(QR결제%)': 단가 칸 값이 % 로 해석됩니다 "
-                          "(예: 5 → QR결제액의 5%)."),
+                          "(예: 5 → QR결제액의 5%). 2.5% 처럼 소수 요율은 "
+                          "단가를 비우고 설명 칸에 'QR오더 결제액의 2.5%' 로 "
+                          "적으면 견적서에 그대로 출력됩니다."),
                 ),
                 "기간(횟수)": st.column_config.NumberColumn(
                     "기간(횟수)", min_value=0, step=1, width="small",
@@ -1378,13 +1380,17 @@ def render_quote_page(catalog_kind: str = "qr"):
             for _, r in deferred_rows.iterrows():
                 name = (r.get("항목") or "솔루션 사용료") or ""
                 rate = r.get("단가")
-                rate_txt = (f"{int(rate)}%" if pd.notna(rate) and rate else "—")
+                # 2.5 같은 소수 요율도 그대로 표시 (2.5% → '2.5%', 3.0 → '3%')
+                rate_txt = (f"{float(rate):g}%"
+                            if pd.notna(rate) and rate else None)
                 desc = (r.get("설명") or "").strip()
-                lines.append(
-                    f"<li><strong>{name}</strong> · QR오더 결제액의 <strong>{rate_txt}</strong>"
-                    + (f" — {desc}" if desc else "")
-                    + "</li>"
-                )
+                if rate_txt:
+                    body = (f"QR오더 결제액의 <strong>{rate_txt}</strong>"
+                            + (f" — {desc}" if desc else ""))
+                else:
+                    # 단가 칸을 비우고 설명에 요율 문구를 쓴 경우
+                    body = desc or "설명 칸에 요율 문구를 입력할 수 있어요"
+                lines.append(f"<li><strong>{name}</strong> · {body}</li>")
             st.markdown(
                 f"""
 <div style="background:#FFF7E6; border-left:4px solid #D97706;

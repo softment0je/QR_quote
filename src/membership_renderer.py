@@ -28,6 +28,7 @@ from .membership_models import (
 )
 from .labels import load_labels
 from .models import Brand
+from .textclean import clean_model
 
 
 # ─── 색상/스타일 헬퍼 ────────────────────────────────────
@@ -976,6 +977,9 @@ def _add_tiny_spacer(doc) -> None:
 def render_membership_docx(brand: Brand, document: MembershipQuoteDocument,
                            project_root: Path, output_path: Path) -> Path:
     labels = load_labels(project_root)
+    # 붙여넣기로 섞여 들어온 제어문자(수직탭 등) 제거 — python-docx 렌더 실패 방지
+    clean_model(document)
+    clean_model(brand)
     vat_rate = labels.quote.vat_rate
 
     doc = Document()

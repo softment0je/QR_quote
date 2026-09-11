@@ -13,6 +13,7 @@ from docx.shared import Cm, Pt, RGBColor
 from .labels import DocumentLabels, load_labels
 from .loader import load_clause, render_clause_body
 from .models import Brand, QuoteDocument, ensure_totals
+from .textclean import clean_model
 
 
 def _hex_to_rgb(hex_color: str) -> RGBColor:
@@ -965,6 +966,9 @@ def _render_contract_signature(doc, brand: Brand, document: QuoteDocument,
 def render_docx(brand: Brand, document: QuoteDocument, project_root: Path,
                 output_path: Path) -> Path:
     labels = load_labels(project_root)
+    # 붙여넣기로 섞여 들어온 제어문자(수직탭 등) 제거 — python-docx 렌더 실패 방지
+    clean_model(document)
+    clean_model(brand)
     # 누락된 totals 필드를 자동 계산 (공급가액 → 부가세 → 합계)
     ensure_totals(document, labels.quote.vat_rate)
 

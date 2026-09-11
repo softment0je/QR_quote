@@ -11,7 +11,7 @@
       "code": "OUT-POSAPP",
       "name": "주문관리 앱",
       "description": "QR오더 주문 수신 및 처리용 앱\n매장 등록 제반사항 업무 지원(한 매장 기준)",
-      "unit_price": 50000,
+      "unit_price": 30000,
       "currency": "KRW"
     },
     {
@@ -25,7 +25,7 @@
       "code": "OUT-KIOSK",
       "name": "휴대용 결제 단말기",
       "description": "실물 카드 결제용 \n- 고객 주문 알림 기능 포함(일기준",
-      "unit_price": 100000,
+      "unit_price": 50000,
       "currency": "KRW"
     },
     {
@@ -68,14 +68,14 @@
       "code": "OUT-OPS",
       "name": "기기 설치비 (수도권 외)",
       "description": "- 수도권 외 지역 설치 시 적용 (1회성)",
-      "unit_price": 150000,
+      "unit_price": 100000,
       "currency": "KRW"
     },
     {
       "code": "OUT-Language",
       "name": "다국어 메뉴정보 번역",
       "description": "- 메뉴명에 대한 다국어 번역 서비스(영어,일본어,중국어 간체/번체) (한 매장 기준)",
-      "unit_price": 100000,
+      "unit_price": 50000,
       "currency": "KRW"
     }
   ]

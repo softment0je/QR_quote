@@ -77,6 +77,14 @@
       "unit_price": 5,
       "currency": "KRW",
       "billing_type": "deferred_percent"
+    },
+    {
+      "code": "OUT-QRPAY",
+      "name": "QR페이 시스템_선불",
+      "description": "- 사업자별 전용QR 발급\n- 정산 서비스\n- 사업자 정산 +1% / 비사업자 정산 +1%",
+      "unit_price": 0,
+      "currency": "KRW",
+      "billing_type": "deferred_percent"
     }
   ]
 }

@@ -755,7 +755,8 @@ def _push_to_github(file_path: str, content_bytes: bytes,
         return False, "requests 모듈 없음"
     try:
         token = st.secrets.get("GITHUB_TOKEN")
-        owner = st.secrets.get("GITHUB_OWNER", "jieunpark322")
+        # 레포 이전(jieunpark322 → softment0je) 반영. secrets 로 덮어쓸 수 있음
+        owner = st.secrets.get("GITHUB_OWNER", "softment0je")
         repo = st.secrets.get("GITHUB_REPO", "QR_quote")
         branch = st.secrets.get("GITHUB_BRANCH", "main")
     except Exception:

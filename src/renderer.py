@@ -323,7 +323,7 @@ def _render_header(doc, brand: Brand, document: QuoteDocument,
 
 
 def _render_counterparty(doc, brand: Brand, document: QuoteDocument,
-                         labels: DocumentLabels) -> None:
+                         labels: DocumentLabels, plan: dict | None = None) -> None:
     font = brand.branding.font_family
     primary = _hex_to_rgb(brand.branding.colors.primary)
 
@@ -366,27 +366,22 @@ def _render_counterparty(doc, brand: Brand, document: QuoteDocument,
         r = para.add_run(text)
         _apply_font(r, font, size_pt=size, bold=bold)
 
+    # 수신처 박스와 건명 사이 여백 — 1페이지 수납 계획에서 계산된 값
+    subject_gap = plan["gap_subject_pt"] if plan else 57
     _add_paragraph(doc, f"{labels.quote.labels.subject_prefix}: {document.subject}",
                    font=font, size_pt=9.5, bold=True,
-                   space_before_pt=57, space_after_pt=2)
+                   space_before_pt=subject_gap, space_after_pt=2)
 
 
-def _render_line_items(doc, brand: Brand, document: QuoteDocument,
-                       labels: DocumentLabels) -> list | None:
-    """품목 표 렌더링. 합계 표가 동일 컬럼 구조로 정렬할 수 있도록 widths 를 반환."""
-    font = brand.branding.font_family
-    primary_hex = brand.branding.colors.primary.lstrip("#")
+def _compute_item_layout(brand: Brand, document: QuoteDocument,
+                         labels: DocumentLabels) -> tuple:
+    """품목 표의 활성 컬럼 · 컬럼 너비 · 본문 폰트 크기를 계산한다.
+
+    표를 그리기 전에 1페이지 수납 계획(_plan_layout)을 세울 때도 필요하므로
+    렌더링과 분리해 두었다.  반환: (active_cols, widths_cm, font_pt, char_cm)
+    """
     ql = labels.quote
     items = document.line_items
-
-    if ql.labels.vat_separate_notice:
-        vat_label_p = doc.add_paragraph()
-        vat_label_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        vat_label_p.paragraph_format.space_before = Pt(0)
-        vat_label_p.paragraph_format.space_after = Pt(0)
-        vat_run = vat_label_p.add_run(ql.labels.vat_separate_notice)
-        _apply_font(vat_run, font, size_pt=8.5, bold=True,
-                    color=RGBColor(0x99, 0x33, 0x33))
 
     th = ql.table_headers
     LEFT = WD_ALIGN_PARAGRAPH.LEFT
@@ -538,7 +533,124 @@ def _render_line_items(doc, brand: Brand, document: QuoteDocument,
                 raw_widths = [w + slack * wt / wsum
                               for w, wt in zip(raw_widths, weights)]
 
-    widths = [Cm(round(w, 2)) for w in raw_widths]
+    return active_cols, raw_widths, chosen_font_pt, CHAR_CM_BY_PT[chosen_font_pt]
+
+
+# ── 1페이지 수납 계획 ────────────────────────────────────
+# Letter(27.94cm) 기준 — python-docx 기본 용지. 상·하 여백 0.8cm + 안전여유.
+_PAGE_H_CM = 27.94
+_SAFETY_CM = 1.45
+# 표 바깥 여백의 최소/최대 (cm). 최소는 빽빽해도 읽히는 선, 최대는 기존 디자인 값.
+_GAP_SUBJECT = (0.35, 2.00)   # 수신처 박스 ↔ 건명
+_GAP_SIGN = (0.30, 0.99)      # 합계/안내 ↔ 발행일·서명
+_GAP_NOTICE = (0.14, 0.35)    # 합계 ↔ 기타 안내
+_ROW_MIN_CM = 0.50            # 품목 행 최소 높이
+_ROW_MAX_CM = 1.80            # 품목 행 최대 높이 (여백이 남을 때만)
+
+
+def _plan_layout(brand: Brand, document: QuoteDocument,
+                 labels: DocumentLabels) -> dict:
+    """내용 높이를 추정해 '표 안팎의 간격'을 정한다.
+
+    품목이 적으면 지금처럼 여유롭게, 많아지면 바깥 여백 → 행 높이 순으로
+    줄여 최대한 1페이지에 담는다.
+    """
+    active_cols, widths_cm, font_pt, char_cm = _compute_item_layout(
+        brand, document, labels)
+    items = document.line_items
+    ql = labels.quote
+
+    # 한 줄 높이 (폰트 크기 × 줄간격) + 셀 상하 여백
+    line_h = font_pt * 0.0353 * 1.50
+    cell_pad = 0.28
+
+    def _wrapped_lines(text: str, width_cm: float) -> int:
+        usable = max(width_cm - 0.45, 0.5)
+        total = 0
+        for ln in str(text).split("\n"):
+            n_chars = max(len(ln), 1)
+            total += max(1, int(-(-n_chars * char_cm // usable)))
+        return total
+
+    row_min = []
+    for it in items:
+        lines = 1
+        for col, w in zip(active_cols, widths_cm):
+            lines = max(lines, _wrapped_lines(col[4](it) or "", w))
+        row_min.append(max(_ROW_MIN_CM, lines * line_h + cell_pad))
+
+    # 고정 블록 높이 추정 (로고~수신처 박스 / 표 머리 / 합계 / 기타안내 / 서명)
+    top_block = 8.30
+    subject_line = 0.60
+    vat_notice = 0.45 if ql.labels.vat_separate_notice else 0.0
+    table_header = 0.55
+    n_total_rows = 3 + (2 if (document.total_discount_rate or 0) > 0 else 0)
+    totals_block = 0.74 * n_total_rows
+    bullets = len([ln for ln in (document.notes or "").splitlines() if ln.strip()])
+    notice_block = (0.60 + 0.55 * bullets) if bullets else 0.0
+    sign_block = 1.90 + (0.50 if brand.footer_text else 0.0)
+
+    avail = _PAGE_H_CM - 0.8 - 0.8 - _SAFETY_CM
+    used = (top_block + _GAP_SUBJECT[0] + subject_line + vat_notice
+            + table_header + sum(row_min) + totals_block
+            + _GAP_NOTICE[0] + notice_block + _GAP_SIGN[0] + sign_block)
+    slack = avail - used
+
+    gap_subject, gap_sign, gap_notice = (
+        _GAP_SUBJECT[0], _GAP_SIGN[0], _GAP_NOTICE[0])
+    # 지정 높이는 AT_LEAST 라 내용이 더 크면 알아서 늘어난다. 여백이 없을 때는
+    # 작게 지정해 내용 높이 그대로 쓰고, 남을 때만 키워서 표가 페이지를 채우게 한다.
+    row_heights = [_ROW_MIN_CM] * len(items)
+    if slack > 0:
+        # 1) 바깥 여백부터 원래 디자인 값까지 복원
+        for name, (lo, hi), share in (("subject", _GAP_SUBJECT, 0.45),
+                                      ("sign", _GAP_SIGN, 0.35),
+                                      ("notice", _GAP_NOTICE, 0.10)):
+            give = min(hi - lo, slack * share)
+            if name == "subject":
+                gap_subject += give
+            elif name == "sign":
+                gap_sign += give
+            else:
+                gap_notice += give
+            slack -= give
+        # 2) 그래도 남으면 행 높이를 키워 표가 페이지를 채우게
+        if slack > 0 and items:
+            # 추정 오차를 감안해 남은 여백의 일부만 행 높이에 배분
+            per_row = slack * 0.6 / len(items)
+            row_heights = [min(_ROW_MAX_CM, h + per_row) for h in row_min]
+
+    return {
+        "active_cols": active_cols,
+        "widths_cm": widths_cm,
+        "font_pt": font_pt,
+        "row_heights": row_heights,
+        "gap_subject_pt": round(gap_subject / 0.0353),
+        "gap_sign_pt": round(gap_sign / 0.0353),
+        "gap_notice_pt": round(gap_notice / 0.0353),
+    }
+
+
+def _render_line_items(doc, brand: Brand, document: QuoteDocument,
+                       labels: DocumentLabels, plan: dict) -> list | None:
+    """품목 표 렌더링. 합계 표가 동일 컬럼 구조로 정렬할 수 있도록 widths 를 반환."""
+    font = brand.branding.font_family
+    primary_hex = brand.branding.colors.primary.lstrip("#")
+    ql = labels.quote
+    items = document.line_items
+
+    if ql.labels.vat_separate_notice:
+        vat_label_p = doc.add_paragraph()
+        vat_label_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        vat_label_p.paragraph_format.space_before = Pt(0)
+        vat_label_p.paragraph_format.space_after = Pt(0)
+        vat_run = vat_label_p.add_run(ql.labels.vat_separate_notice)
+        _apply_font(vat_run, font, size_pt=8.5, bold=True,
+                    color=RGBColor(0x99, 0x33, 0x33))
+
+    active_cols = plan["active_cols"]
+    chosen_font_pt = plan["font_pt"]
+    widths = [Cm(round(w, 2)) for w in plan["widths_cm"]]
     headers = [c[1] for c in active_cols]
 
     table = doc.add_table(rows=1 + len(items), cols=len(headers))
@@ -565,26 +677,12 @@ def _render_line_items(doc, brand: Brand, document: QuoteDocument,
 
     # 폰트는 위 컬럼 너비 계산에서 결정된 chosen_font_pt 사용 — 한 줄 보장 우선
     cell_font_pt = chosen_font_pt
-    # 행 높이는 항목 수 기반 (한 장 자동 채움)
-    n_items = len(items)
-    if n_items <= 4:
-        row_h_cm = 1.8
-    elif n_items <= 7:
-        row_h_cm = 1.3
-    elif n_items <= 11:
-        row_h_cm = 1.0
-    elif n_items <= 15:
-        row_h_cm = 0.85
-    elif n_items <= 20:
-        row_h_cm = 0.7
-    elif n_items <= 26:
-        row_h_cm = 0.55
-    else:
-        row_h_cm = 0.5
+    # 행 높이는 1페이지 수납 계획에서 계산된 값 (남는 여백만큼만 키움)
+    row_heights = plan["row_heights"]
 
     for r_idx, item in enumerate(items, start=1):
         row_obj = table.rows[r_idx]
-        row_obj.height = Cm(row_h_cm)
+        row_obj.height = Cm(round(row_heights[r_idx - 1], 2))
         row_obj.height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
         is_discount = (item.amount or 0) < 0 or (item.unit_price or 0) < 0
         # 항목별 할인이 있는 일반 품목 행 — 할인 셀만 별도로 음영 강조
@@ -755,7 +853,7 @@ def _render_clauses(doc, brand: Brand, document: QuoteDocument, project_root: Pa
 
 
 def _render_etc_notice(doc, brand: Brand, document: QuoteDocument,
-                       labels: DocumentLabels) -> None:
+                       labels: DocumentLabels, plan: dict | None = None) -> None:
     """기타 안내 — 사용자가 textarea 에 입력한 notes 를 줄별 bullet 으로 표시.
 
     자동 안내(유효기간/입금계좌)는 webapp 의 textarea 기본값으로 채워지므로
@@ -771,9 +869,10 @@ def _render_etc_notice(doc, brand: Brand, document: QuoteDocument,
     if not bullets:
         return
 
+    notice_gap = plan["gap_notice_pt"] if plan else 10
     _add_paragraph(doc, ql.labels.etc_notice_section,
                    font=font, size_pt=10, bold=True,
-                   color=primary, space_before_pt=10, space_after_pt=2)
+                   color=primary, space_before_pt=notice_gap, space_after_pt=2)
     for text in bullets:
         para = doc.add_paragraph()
         para.paragraph_format.space_after = Pt(1)
@@ -783,13 +882,15 @@ def _render_etc_notice(doc, brand: Brand, document: QuoteDocument,
 
 
 def _render_signature(doc, brand: Brand, document: QuoteDocument,
-                      labels: DocumentLabels) -> None:
+                      labels: DocumentLabels, plan: dict | None = None) -> None:
     font = brand.branding.font_family
     primary = _hex_to_rgb(brand.branding.colors.primary)
 
+    sign_gap = plan["gap_sign_pt"] if plan else 28
     _add_paragraph(doc, document.issued_date.strftime("%Y년 %m월 %d일"),
                    font=font, size_pt=11, alignment=WD_ALIGN_PARAGRAPH.CENTER,
-                   space_before_pt=28, space_after_pt=10)
+                   space_before_pt=sign_gap,
+                   space_after_pt=max(4, min(10, round(sign_gap * 0.4))))
 
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -992,14 +1093,15 @@ def render_docx(brand: Brand, document: QuoteDocument, project_root: Path,
         _render_clauses(doc, brand, document, project_root)
         _render_contract_signature(doc, brand, document, labels)
     else:
+        plan = _plan_layout(brand, document, labels)
         _render_header(doc, brand, document, labels)
-        _render_counterparty(doc, brand, document, labels)
-        item_widths = _render_line_items(doc, brand, document, labels)
+        _render_counterparty(doc, brand, document, labels, plan)
+        item_widths = _render_line_items(doc, brand, document, labels, plan)
         _render_totals(doc, brand, document, labels,
                        item_table_widths=item_widths)
-        _render_etc_notice(doc, brand, document, labels)
+        _render_etc_notice(doc, brand, document, labels, plan)
         _render_clauses(doc, brand, document, project_root)
-        _render_signature(doc, brand, document, labels)
+        _render_signature(doc, brand, document, labels, plan)
 
     # 한글-숫자 사이 자동 공백 제거 (모든 단락 일괄)
     _disable_auto_space_doc(doc)

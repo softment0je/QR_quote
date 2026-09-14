@@ -55,6 +55,7 @@ from src.membership_models import (
 from src.membership_renderer import render_membership_docx
 from src.pdf_converter import convert_docx_to_pdf, find_soffice
 from src.renderer import render_docx
+from src import store
 
 
 def _detect_project_root() -> Path:
@@ -85,11 +86,31 @@ AUTOSAVE_DIR = PROJECT_ROOT / "output" / "_autosave"
 QR_AUTOSAVE_PATH = AUTOSAVE_DIR / "qr_quote.json"
 MC_AUTOSAVE_PATH = AUTOSAVE_DIR / "membership_quote.json"
 
-QR_HISTORY_DIR = PROJECT_ROOT / "output" / "_history" / "qr"
-QR_TEMPLATE_DIR = PROJECT_ROOT / "output" / "_templates" / "qr"
-MC_HISTORY_DIR = PROJECT_ROOT / "output" / "_history" / "mc"
-MC_TEMPLATE_DIR = PROJECT_ROOT / "output" / "_templates" / "mc"
+# 표본·최근 다운로드는 영구 저장소(store)에 보관한다. 컨테이너 파일시스템은
+# 재배포 때마다 초기화되므로 GitHub 데이터 브랜치에 함께 저장된다.
+QR_HISTORY_STORE = "store/qr_history.json"
+QR_TEMPLATE_STORE = "store/qr_templates.json"
+MC_HISTORY_STORE = "store/mc_history.json"
+MC_TEMPLATE_STORE = "store/mc_templates.json"
 HISTORY_LIMIT = 10
+
+
+def _store_load_items(rel_path: str) -> list[dict]:
+    data = store.load(PROJECT_ROOT, rel_path, {"items": []})
+    items = data.get("items")
+    return [it for it in items if isinstance(it, dict)] if isinstance(items, list) else []
+
+
+def _store_save_items(rel_path: str, items: list[dict], message: str) -> None:
+    ok, msg = store.save(PROJECT_ROOT, rel_path, {"items": items}, message)
+    st.session_state["_store_sync"] = (ok, msg)
+
+
+def _entry_key(data: dict) -> str:
+    """목록에서 항목을 식별하는 키 (삭제·버튼 key 용)."""
+    return (str(data.get("_template_name") or "")
+            + "|" + str(data.get("_document_id") or "")
+            + "|" + str(data.get("_saved_at") or ""))
 
 # 저장/표시 시각은 한국 표준시(KST, UTC+9) 기준 — Streamlit Cloud 가 UTC 라
 # datetime.now() 결과를 그대로 쓰면 9시간 어긋남
@@ -255,24 +276,36 @@ def _qr_apply_snapshot(payload: dict) -> None:
             st.session_state[k] = v
 
 
+def _save_history_entry(rel_path: str, payload: dict, document_id: str,
+                        label: str) -> None:
+    """히스토리 저장 — 같은 document_id 는 1건으로 유지하고 최신순 10건만 남긴다."""
+    items = [it for it in _store_load_items(rel_path)
+             if it.get("_document_id") != document_id]
+    items.insert(0, payload)
+    _store_save_items(rel_path, items[:HISTORY_LIMIT],
+                      f"{label} 히스토리 갱신: {document_id}")
+
+
+def _save_template_entry(rel_path: str, payload: dict, name: str,
+                         label: str) -> None:
+    """표본 저장 — 같은 이름이면 덮어쓰고 최신순으로 올린다."""
+    items = [it for it in _store_load_items(rel_path)
+             if it.get("_template_name") != name]
+    items.insert(0, payload)
+    _store_save_items(rel_path, items, f"{label} 표본 저장: {name}")
+
+
+def _delete_entry(rel_path: str, key: str, label: str) -> None:
+    items = [it for it in _store_load_items(rel_path) if _entry_key(it) != key]
+    _store_save_items(rel_path, items, f"{label} 항목 삭제")
+
+
 def _qr_save_history(snapshot: dict, document_id: str) -> None:
     """견적서 생성/미리보기 직후 히스토리에 저장.
 
-    같은 document_id 인 기존 파일은 모두 제거 → DOCX/PDF 또는 미리보기/생성에서
-    중복으로 쌓이지 않고 항상 1개만 유지 (최신 입력 반영).
+    같은 document_id 는 1건으로 유지 → DOCX/PDF 또는 미리보기/생성에서
+    중복으로 쌓이지 않고 항상 최신 입력만 남는다.
     """
-    QR_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
-    from datetime import datetime
-    safe_id = "".join(c for c in document_id if c.isalnum() or c in "-_")[:40]
-
-    # 같은 document_id 기존 파일 모두 제거 (중복 방지)
-    for old in QR_HISTORY_DIR.glob(f"*_{safe_id}.json"):
-        try:
-            old.unlink(missing_ok=True)
-        except OSError:
-            pass
-
-    ts = _now_kst().strftime("%Y%m%d_%H%M%S")
     payload = {
         **snapshot,
         "_document_id": document_id,
@@ -280,68 +313,36 @@ def _qr_save_history(snapshot: dict, document_id: str) -> None:
         "_subject": st.session_state.get("subject", ""),
         "_cp_name": st.session_state.get("cp_name", ""),
     }
-    path = QR_HISTORY_DIR / f"{ts}_{safe_id}.json"
-    _write_json_safe(path, payload)
-    # 오래된 히스토리 정리 (HISTORY_LIMIT 초과분 삭제)
-    files = sorted(QR_HISTORY_DIR.glob("*.json"),
-                   key=lambda p: p.stat().st_mtime, reverse=True)
-    for old in files[HISTORY_LIMIT:]:
-        try:
-            old.unlink()
-        except OSError:
-            pass
+    _save_history_entry(QR_HISTORY_STORE, payload, document_id, "QR 견적서")
 
 
-def _qr_list_history() -> list[tuple[Path, dict]]:
-    if not QR_HISTORY_DIR.exists():
-        return []
-    files = sorted(QR_HISTORY_DIR.glob("*.json"),
-                   key=lambda p: p.stat().st_mtime, reverse=True)[:HISTORY_LIMIT]
-    result = []
-    for p in files:
-        data = _read_json_safe(p)
-        if data:
-            result.append((p, data))
-    return result
+def _qr_list_history() -> list[tuple[str, dict]]:
+    return [(_entry_key(d), d) for d in _store_load_items(QR_HISTORY_STORE)]
+
+
+def _qr_delete_history(key: str) -> None:
+    _delete_entry(QR_HISTORY_STORE, key, "QR 견적서")
 
 
 def _qr_save_template(name: str, snapshot: dict) -> bool:
     name = (name or "").strip()
     if not name:
         return False
-    QR_TEMPLATE_DIR.mkdir(parents=True, exist_ok=True)
-    safe = "".join(c for c in name if c.isalnum() or c in " -_가-힣")[:60].strip()
-    if not safe:
-        return False
-    from datetime import datetime
     payload = {
         **snapshot,
         "_template_name": name,
         "_saved_at": _now_kst().isoformat(timespec="seconds"),
     }
-    path = QR_TEMPLATE_DIR / f"{safe}.json"
-    _write_json_safe(path, payload)
+    _save_template_entry(QR_TEMPLATE_STORE, payload, name, "QR 견적서")
     return True
 
 
-def _qr_list_templates() -> list[tuple[Path, dict]]:
-    if not QR_TEMPLATE_DIR.exists():
-        return []
-    files = sorted(QR_TEMPLATE_DIR.glob("*.json"),
-                   key=lambda p: p.stat().st_mtime, reverse=True)
-    result = []
-    for p in files:
-        data = _read_json_safe(p)
-        if data:
-            result.append((p, data))
-    return result
+def _qr_list_templates() -> list[tuple[str, dict]]:
+    return [(_entry_key(d), d) for d in _store_load_items(QR_TEMPLATE_STORE)]
 
 
-def _qr_delete_template(path: Path) -> None:
-    try:
-        path.unlink(missing_ok=True)
-    except OSError:
-        pass
+def _qr_delete_template(key: str) -> None:
+    _delete_entry(QR_TEMPLATE_STORE, key, "QR 견적서")
 
 
 # ── 멤버십 견적서 — 최근 다운로드 / 표본 헬퍼 ──
@@ -382,15 +383,6 @@ def _mc_apply_snapshot(payload: dict) -> None:
 
 def _mc_save_history(snapshot: dict, document_id: str) -> None:
     """멤버십 견적서 생성/미리보기 시 히스토리에 저장 (같은 document_id 면 1개로 유지)."""
-    MC_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
-    from datetime import datetime
-    safe_id = "".join(c for c in document_id if c.isalnum() or c in "-_")[:40]
-    for old in MC_HISTORY_DIR.glob(f"*_{safe_id}.json"):
-        try:
-            old.unlink(missing_ok=True)
-        except OSError:
-            pass
-    ts = _now_kst().strftime("%Y%m%d_%H%M%S")
     doc = (snapshot.get("mc_doc") or {})
     cp_name = (doc.get("counterparty") or {}).get("name") or ""
     title = doc.get("title") or "멤버십 클라우드 견적서"
@@ -401,67 +393,36 @@ def _mc_save_history(snapshot: dict, document_id: str) -> None:
         "_subject": title,
         "_cp_name": cp_name,
     }
-    path = MC_HISTORY_DIR / f"{ts}_{safe_id}.json"
-    _write_json_safe(path, payload)
-    files = sorted(MC_HISTORY_DIR.glob("*.json"),
-                   key=lambda p: p.stat().st_mtime, reverse=True)
-    for old in files[HISTORY_LIMIT:]:
-        try:
-            old.unlink()
-        except OSError:
-            pass
+    _save_history_entry(MC_HISTORY_STORE, payload, document_id, "멤버십 견적서")
 
 
-def _mc_list_history() -> list[tuple[Path, dict]]:
-    if not MC_HISTORY_DIR.exists():
-        return []
-    files = sorted(MC_HISTORY_DIR.glob("*.json"),
-                   key=lambda p: p.stat().st_mtime, reverse=True)[:HISTORY_LIMIT]
-    result = []
-    for p in files:
-        data = _read_json_safe(p)
-        if data:
-            result.append((p, data))
-    return result
+def _mc_list_history() -> list[tuple[str, dict]]:
+    return [(_entry_key(d), d) for d in _store_load_items(MC_HISTORY_STORE)]
+
+
+def _mc_delete_history(key: str) -> None:
+    _delete_entry(MC_HISTORY_STORE, key, "멤버십 견적서")
 
 
 def _mc_save_template(name: str, snapshot: dict) -> bool:
     name = (name or "").strip()
     if not name:
         return False
-    MC_TEMPLATE_DIR.mkdir(parents=True, exist_ok=True)
-    safe = "".join(c for c in name if c.isalnum() or c in " -_가-힣")[:60].strip()
-    if not safe:
-        return False
-    from datetime import datetime
     payload = {
         **snapshot,
         "_template_name": name,
         "_saved_at": _now_kst().isoformat(timespec="seconds"),
     }
-    path = MC_TEMPLATE_DIR / f"{safe}.json"
-    _write_json_safe(path, payload)
+    _save_template_entry(MC_TEMPLATE_STORE, payload, name, "멤버십 견적서")
     return True
 
 
-def _mc_list_templates() -> list[tuple[Path, dict]]:
-    if not MC_TEMPLATE_DIR.exists():
-        return []
-    files = sorted(MC_TEMPLATE_DIR.glob("*.json"),
-                   key=lambda p: p.stat().st_mtime, reverse=True)
-    result = []
-    for p in files:
-        data = _read_json_safe(p)
-        if data:
-            result.append((p, data))
-    return result
+def _mc_list_templates() -> list[tuple[str, dict]]:
+    return [(_entry_key(d), d) for d in _store_load_items(MC_TEMPLATE_STORE)]
 
 
-def _mc_delete_template(path: Path) -> None:
-    try:
-        path.unlink(missing_ok=True)
-    except OSError:
-        pass
+def _mc_delete_template(key: str) -> None:
+    _delete_entry(MC_TEMPLATE_STORE, key, "멤버십 견적서")
 
 
 def _render_mc_recent_panel() -> None:
@@ -478,8 +439,8 @@ def _render_mc_recent_panel() -> None:
         if not history:
             st.caption("아직 생성/미리보기한 견적서가 없습니다.")
             return
-        delete_path = None
-        for i, (path, data) in enumerate(history):
+        delete_key = None
+        for i, (key, data) in enumerate(history):
             saved = (data.get("_saved_at") or "")[:16].replace("T", " ")
             subj = data.get("_subject") or "(건명 없음)"
             cp = data.get("_cp_name") or "(수신처 없음)"
@@ -502,12 +463,9 @@ def _render_mc_recent_panel() -> None:
                     if st.button("🗑 삭제",
                                  key=f"mc_hist_del_{i}",
                                  use_container_width=True):
-                        delete_path = path
-        if delete_path is not None:
-            try:
-                delete_path.unlink(missing_ok=True)
-            except OSError:
-                pass
+                        delete_key = key
+        if delete_key is not None:
+            _mc_delete_history(delete_key)
             st.rerun()
 
 
@@ -548,9 +506,9 @@ def _render_mc_template_panel() -> None:
         if not templates:
             st.caption("저장된 표본이 없습니다.")
             return
-        delete_path = None
-        for i, (path, data) in enumerate(templates):
-            name = data.get("_template_name") or path.stem
+        delete_key = None
+        for i, (key, data) in enumerate(templates):
+            name = data.get("_template_name") or "(이름 없음)"
             saved = (data.get("_saved_at") or "")[:10]
             with st.container(border=True):
                 rcols = st.columns([6, 1.2, 1.2])
@@ -571,9 +529,9 @@ def _render_mc_template_panel() -> None:
                     if st.button("🗑 삭제",
                                  key=f"mc_tpl_del_{i}",
                                  use_container_width=True):
-                        delete_path = path
-        if delete_path is not None:
-            _mc_delete_template(delete_path)
+                        delete_key = key
+        if delete_key is not None:
+            _mc_delete_template(delete_key)
             st.rerun()
 
 
@@ -618,8 +576,8 @@ def _render_qr_recent_panel() -> None:
             st.caption("아직 생성/미리보기한 견적서가 없습니다.")
             return
 
-        delete_path = None
-        for i, (path, data) in enumerate(history):
+        delete_key = None
+        for i, (key, data) in enumerate(history):
             saved = (data.get("_saved_at") or "")[:16].replace("T", " ")
             subj = data.get("_subject") or "(건명 없음)"
             cp = data.get("_cp_name") or "(수신처 없음)"
@@ -643,12 +601,9 @@ def _render_qr_recent_panel() -> None:
                                  key=f"qr_hist_del_{i}",
                                  use_container_width=True,
                                  help="이 견적서 히스토리만 삭제 (DOCX/PDF 파일은 그대로)"):
-                        delete_path = path
-        if delete_path is not None:
-            try:
-                delete_path.unlink(missing_ok=True)
-            except OSError:
-                pass
+                        delete_key = key
+        if delete_key is not None:
+            _qr_delete_history(delete_key)
             st.rerun()
 
 
@@ -688,9 +643,9 @@ def _render_qr_template_panel() -> None:
             st.caption("저장된 표본이 없습니다.")
             return
 
-        delete_path = None
-        for i, (path, data) in enumerate(templates):
-            name = data.get("_template_name") or path.stem
+        delete_key = None
+        for i, (key, data) in enumerate(templates):
+            name = data.get("_template_name") or "(이름 없음)"
             saved = (data.get("_saved_at") or "")[:10]
             with st.container(border=True):
                 rcols = st.columns([6, 1.2, 1.2])
@@ -711,9 +666,9 @@ def _render_qr_template_panel() -> None:
                     if st.button("🗑 삭제",
                                  key=f"qr_tpl_del_{i}",
                                  use_container_width=True):
-                        delete_path = path
-        if delete_path is not None:
-            _qr_delete_template(delete_path)
+                        delete_key = key
+        if delete_key is not None:
+            _qr_delete_template(delete_key)
             st.rerun()
 
 
@@ -731,60 +686,16 @@ CATALOG_FILES = {
 @st.cache_data
 def _load_products_for(catalog_kind: str = "qr") -> list[dict]:
     fname = CATALOG_FILES.get(catalog_kind, "products.json")
-    path = PROJECT_ROOT / "catalog" / fname
-    if not path.exists():
-        return []
-    return json.loads(path.read_text(encoding="utf-8")).get("products", [])
+    data = store.load(PROJECT_ROOT, f"catalog/{fname}", {"products": []},
+                      repo_fallback=PROJECT_ROOT / "catalog" / fname)
+    products = data.get("products")
+    return products if isinstance(products, list) else []
 
 
 @st.cache_data
 def _load_products() -> list[dict]:
     """기존 호환 — 일반 QR 카탈로그."""
     return _load_products_for("qr")
-
-
-def _push_to_github(file_path: str, content_bytes: bytes,
-                    message: str) -> tuple[bool, str]:
-    """GitHub repo 의 파일을 자동 commit + push.
-    Streamlit secrets 에 GITHUB_TOKEN 이 없으면 (False, 사유) 반환.
-    """
-    import base64
-    try:
-        import requests
-    except ImportError:
-        return False, "requests 모듈 없음"
-    try:
-        token = st.secrets.get("GITHUB_TOKEN")
-        # 레포 이전(jieunpark322 → softment0je) 반영. secrets 로 덮어쓸 수 있음
-        owner = st.secrets.get("GITHUB_OWNER", "softment0je")
-        repo = st.secrets.get("GITHUB_REPO", "QR_quote")
-        branch = st.secrets.get("GITHUB_BRANCH", "main")
-    except Exception:
-        return False, "secrets 접근 실패"
-    if not token:
-        return False, "GITHUB_TOKEN 미설정 (수동 백업 모드)"
-    api = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-    try:
-        resp = requests.get(api, headers=headers, params={"ref": branch}, timeout=10)
-        sha = resp.json().get("sha") if resp.status_code == 200 else None
-        payload = {
-            "message": message,
-            "content": base64.b64encode(content_bytes).decode("ascii"),
-            "branch": branch,
-        }
-        if sha:
-            payload["sha"] = sha
-        resp = requests.put(api, headers=headers, json=payload, timeout=15)
-        if resp.status_code in (200, 201):
-            return True, "GitHub 영구 저장 완료"
-        return False, f"PUT {resp.status_code}: {resp.text[:120]}"
-    except Exception as e:  # noqa: BLE001
-        return False, f"네트워크 오류: {e}"
 
 
 def _save_products_for(catalog_kind: str, products: list[dict]) -> None:
@@ -797,11 +708,9 @@ def _save_products_for(catalog_kind: str, products: list[dict]) -> None:
     path.write_bytes(payload_bytes)
     _load_products_for.clear()
     _load_products.clear()
-    # GitHub 자동 commit (secrets 에 토큰 있으면)
-    ok, msg = _push_to_github(
-        f"catalog/{fname}", payload_bytes,
-        f"품목 관리({catalog_kind}): {len(products)}개 저장"
-    )
+    ok, msg = store.save(
+        PROJECT_ROOT, f"catalog/{fname}", {"products": products},
+        f"품목 관리({catalog_kind}): {len(products)}개 저장")
     st.session_state[f"_github_sync_{catalog_kind}"] = (ok, msg)
 
 
@@ -2618,10 +2527,11 @@ _DEFAULT_SUBCATEGORIES = ["초기구축비", "사용료", "옵션", "할인"]
 
 @st.cache_data
 def _load_membership_products() -> list[dict]:
-    path = PROJECT_ROOT / "catalog" / "membership_products.json"
-    if not path.exists():
-        return []
-    return json.loads(path.read_text(encoding="utf-8")).get("products", [])
+    data = store.load(
+        PROJECT_ROOT, "catalog/membership_products.json", {"products": []},
+        repo_fallback=PROJECT_ROOT / "catalog" / "membership_products.json")
+    products = data.get("products")
+    return products if isinstance(products, list) else []
 
 
 def _save_membership_products(products: list[dict]) -> None:
@@ -2632,11 +2542,9 @@ def _save_membership_products(products: list[dict]) -> None:
     ).encode("utf-8")
     path.write_bytes(payload_bytes)
     _load_membership_products.clear()
-    # GitHub 자동 commit
-    ok, msg = _push_to_github(
-        "catalog/membership_products.json", payload_bytes,
-        f"품목 관리(membership): {len(products)}개 저장",
-    )
+    ok, msg = store.save(
+        PROJECT_ROOT, "catalog/membership_products.json", {"products": products},
+        f"품목 관리(membership): {len(products)}개 저장")
     st.session_state["_github_sync_membership"] = (ok, msg)
 
 

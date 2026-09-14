@@ -10,42 +10,42 @@
     {
       "code": "OUT-POSAPP",
       "name": "주문관리 앱",
-      "description": "QR오더 주문 수신 및 처리용 앱\n매장 등록 제반사항 업무 지원(한 매장 기준)",
+      "description": "- QR오더 주문 수신 및 처리용 앱\n- 매장 등록 제반사항 업무 지원(한 매장 기준)",
       "unit_price": 30000,
       "currency": "KRW"
     },
     {
       "code": "OUT-TABLET",
       "name": "태블릿 PC + 휴대용 인터넷",
-      "description": "사업주 사용\n(1일기준 / 한 매장 기준)",
+      "description": "- 사업주 사용\n(1일 기준 / 한 매장 기준)",
       "unit_price": 50000,
       "currency": "KRW"
     },
     {
       "code": "OUT-KIOSK",
       "name": "휴대용 결제 단말기",
-      "description": "실물 카드 결제용 \n- 고객 주문 알림 기능 포함(일기준",
+      "description": "- 실물 카드 결제용 \n- 고객 주문 알림 기능 포함(1일 기준)",
       "unit_price": 50000,
       "currency": "KRW"
     },
     {
       "code": "OUT-ADBANNER",
       "name": "QR메뉴판 광고채널",
-      "description": "배너영역 Web 연결 기능\n(1일 기준)",
+      "description": "- 배너영역 Web 연결 기능\n(1일 기준)",
       "unit_price": 50000,
       "currency": "KRW"
     },
     {
       "code": "OUT-KAKAO",
       "name": "카카오톡 알림톡 브랜드 계정 연동",
-      "description": "고객 안내 알림톡 브랜드 채널 연동\n알림톡 문구 커스텀 적용\n(대금결제)",
+      "description": "- 고객 안내 알림톡 브랜드 채널 연동\n- 알림톡 문구 커스텀 적용\n(1회성)",
       "unit_price": 300000,
       "currency": "KRW"
     },
     {
       "code": "OUT-OPS",
       "name": "현장 운영 지원 (지방)",
-      "description": "현장 시스템 안전성 현장 관리\n사용자 교육\n사업주 문의 대응\n(1일 기준)",
+      "description": "- 현장 시스템 안전성 현장 관리\n- 사용자 교육\n- 사업주 문의 대응\n(1일 기준)",
       "unit_price": 200000,
       "currency": "KRW"
     },
@@ -85,6 +85,13 @@
       "unit_price": 0,
       "currency": "KRW",
       "billing_type": "deferred_percent"
+    },
+    {
+      "code": "OUT-KIOSK",
+      "name": "결제 키오스크",
+      "description": "- 실물 카드 결제용 \n- 고객 주문 알림 기능 포함(1일 기준)",
+      "unit_price": 200000,
+      "currency": "KRW"
     }
   ]
 }

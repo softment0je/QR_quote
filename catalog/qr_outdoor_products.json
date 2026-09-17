@@ -3,7 +3,7 @@
     {
       "code": "OUT-QRORDER",
       "name": "QR오더 시스템_선불",
-      "description": "- 행사 전용 QR오더 발급\n- 서비스  사용 수수료 : 2.50% (카카오톡 알림톡 발송료 포함)",
+      "description": "- 행사 전용 QR오더 발급\n- 서비스  사용 수수료 : 2.50% (카카오톡 알림톡 발송료 포함)\n- 사업자별 카드수수료는 별도.",
       "unit_price": 0,
       "currency": "KRW"
     },
